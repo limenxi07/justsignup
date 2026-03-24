@@ -1,0 +1,7 @@
+.env
+.venv/
+*.code-workspace
+*.session
+*.session-journal
+__pycache__/
+justsignup.db

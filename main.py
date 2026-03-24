@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import yaml
+from db import init_db, save_event
 from dotenv import load_dotenv
 from pipeline import run_pipeline
 from telethon import TelegramClient, events
@@ -29,6 +30,7 @@ CHANNELS = public_channels + private_ids
 
 
 async def main():
+    init_db()
     client = TelegramClient("justsignup", API_ID, API_HASH, connection=ConnectionTcpFull)
     await client.connect()
 
@@ -87,9 +89,12 @@ async def main():
 
         # Run pipeline in executor so it doesn't block the event loop
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, run_pipeline, message)
+        result = await loop.run_in_executor(None, run_pipeline, message, channel_name)
 
         if result:
+            event_id = save_event(channel_name, message, result)
+            print(f"  Saved to DB with id: {event_id}")
+
             print(f"  Event: {result.get('title')}")
             print(f"  Type: {result.get('event_type')}")
             print(f"  Date: {result.get('date')}")

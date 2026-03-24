@@ -1,9 +1,8 @@
 import os
 import json
+from db import save_event
 from typing import Optional
 from anthropic import Anthropic
-
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 MAX_TOKENS = 1500
 MODEL = "claude-sonnet-4-6"
@@ -47,9 +46,13 @@ NUS Faculties and their departments:
 """
 
 
+def get_client():
+    return Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+
 def classify(message: str) -> bool:
     """Step 1: Is this an event or opportunity announcement? Uses Haiku."""
-    response = client.messages.create(
+    response = get_client().messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=16,
         system=(
@@ -66,7 +69,7 @@ def classify(message: str) -> bool:
 def extract(message: str) -> dict:
     """Step 2: Extract message into EVENT_SCHEMA. Uses Sonnet."""
     schema_str = json.dumps(EVENT_SCHEMA, indent=2)
-    response = client.messages.create(
+    response = get_client().messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=(
@@ -91,11 +94,7 @@ def extract(message: str) -> dict:
         return json.loads(clean)
 
 
-def run_pipeline(message: str) -> Optional[dict]:
-    """
-    Full Day 2 pipeline: classify then extract.
-    Returns extracted event dict, or None if not an event.
-    """
+def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
     print("  [1] Classifying...")
     if not classify(message):
         print("  [1] Not an event, discarding.")
@@ -105,5 +104,9 @@ def run_pipeline(message: str) -> Optional[dict]:
     print("  [2] Extracting...")
     event = extract(message)
     print("  [2] Extracted.")
+
+    event_id = save_event(channel, message, event)
+    event["_id"] = event_id  # attach id for downstream steps
+    print(f"  [2] Saved to DB, id: {event_id}")
 
     return event

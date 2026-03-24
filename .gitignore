@@ -5,3 +5,4 @@
 *.session-journal
 __pycache__/
 justsignup.db
+test_*.py

@@ -1,8 +1,10 @@
 import asyncio
+import json
 import os
 import sys
 import yaml
 from dotenv import load_dotenv
+from pipeline import run_pipeline
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 from telethon.network import ConnectionTcpFull
@@ -74,15 +76,27 @@ async def main():
         if event.chat_id not in channel_ids:
             return
 
-        chat = await event.get_chat()
-        sender = await event.get_sender()
+        message = event.raw_text
+        if not message or not message.strip():
+            return  # skip empty messages, stickers, media with no caption
 
-        print("\n" + "=" * 60)
-        print(f"CHANNEL : {getattr(chat, 'title', chat.id)}")
-        print(f"SENDER  : {getattr(sender, 'username', sender.id)}")
-        print(f"TIME    : {event.date}")
-        print(f"MESSAGE :\n{event.raw_text}")
-        print("=" * 60)
+        chat = await event.get_chat()
+        channel_name = getattr(chat, "title", str(event.chat_id))
+
+        print(f"\nNew message from {channel_name}")
+
+        # Run pipeline in executor so it doesn't block the event loop
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_pipeline, message)
+
+        if result:
+            print(f"  Event: {result.get('title')}")
+            print(f"  Type: {result.get('event_type')}")
+            print(f"  Date: {result.get('date')}")
+            print(f"  Fee: {result.get('fee')}")
+            print(f"  Full extract: {json.dumps(result, indent=2)}")
+        else:
+            print("  Discarded.")
 
     print(f"Listening to {len(channel_entities)} channel(s). Waiting for messages...")
     await client.run_until_disconnected()

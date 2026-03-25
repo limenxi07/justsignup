@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import yaml
+from bot import build_app
 from db import init_db, save_event
 from dotenv import load_dotenv
 from pipeline import run_pipeline
@@ -31,6 +32,15 @@ CHANNELS = public_channels + private_ids
 
 async def main():
     init_db()
+
+    # build the bot app but don't start polling yet
+    bot_app = build_app()
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
+    print("Bot started.")
+
+    # telegram client setup
     client = TelegramClient("justsignup", API_ID, API_HASH, connection=ConnectionTcpFull)
     await client.connect()
 
@@ -55,7 +65,13 @@ async def main():
     if not CHANNELS:
         print("No channels configured. Add public usernames to config.yaml or PRIVATE_CHANNEL_ID_x to .env.")
         print("Idling — will start listening once channels are configured and you restart.")
-        await client.run_until_disconnected()
+        try:
+            await client.run_until_disconnected()
+        finally:
+            await bot_app.updater.stop()
+            await bot_app.stop()
+            await bot_app.shutdown()
+            print("Bot stopped.")
         return
 
     channel_entities = []
@@ -104,7 +120,14 @@ async def main():
             print("  Discarded.")
 
     print(f"Listening to {len(channel_entities)} channel(s). Waiting for messages...")
-    await client.run_until_disconnected()
+
+    try:
+        await client.run_until_disconnected()
+    finally:
+        await bot_app.updater.stop()
+        await bot_app.stop()
+        await bot_app.shutdown()
+        print("Bot stopped.")
 
 
 if __name__ == "__main__":

@@ -137,12 +137,31 @@ def update_scores(event_id: int, claude_score: int, adjusted_score: int,
     conn.close()
 
 
-def get_unsent_events(threshold: int) -> list[dict]:
+def get_unsent_events(limit: int = 5) -> list[dict]:
     """
-    Return all events with adjusted_score >= threshold
-    that have not been sent yet, sorted by adjusted_score descending.
-    Events with null date_iso appear at the bottom.
+    Return top 5 undelivered events by adjusted_score within the digest frequency window,
+    sorted by adjusted_score descending. Events with null date_iso appear at the bottom.
     """
+    import json
+    from datetime import datetime, timedelta
+
+    profile_conn = get_connection()
+    pc = profile_conn.cursor()
+    pc.execute("SELECT value FROM profile WHERE key = 'digest_frequency'")
+    row = pc.fetchone()
+    profile_conn.close()
+
+    frequency = row["value"] if row else "Daily"
+
+    cutoff_map = {
+        "Daily":        timedelta(days=1),
+        "2x in a week": timedelta(days=3),
+        "Weekly":       timedelta(days=7),
+        "Biweekly":     timedelta(days=14),
+    }
+    delta = cutoff_map.get(frequency, timedelta(days=1))
+    cutoff = (datetime.utcnow() - delta).isoformat()
+
     conn = get_connection()
     c = conn.cursor()
 
@@ -150,12 +169,13 @@ def get_unsent_events(threshold: int) -> list[dict]:
         SELECT e.*
         FROM events e
         LEFT JOIN sent_events s ON e.id = s.event_id
-        WHERE e.adjusted_score >= ?
-          AND s.event_id IS NULL
+        WHERE s.event_id IS NULL
+          AND e.created_at >= ?
         ORDER BY
             CASE WHEN e.date_iso IS NULL THEN 1 ELSE 0 END,
             e.adjusted_score DESC
-    """, (threshold,))
+        LIMIT ?
+    """, (cutoff, limit))
 
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
@@ -254,3 +274,18 @@ def save_profile(updates: dict):
 
     conn.commit()
     conn.close()
+
+
+def event_exists(title: str) -> bool:
+    """Return True if an event with a sufficiently similar title already exists in the DB."""
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT COUNT(*) as cnt FROM events
+        WHERE LOWER(title) = LOWER(?)
+    """, (title.strip(),))
+
+    row = c.fetchone()
+    conn.close()
+    return row["cnt"] > 0

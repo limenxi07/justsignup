@@ -1,6 +1,6 @@
 import os
 import json
-from db import save_event, update_scores, get_profile
+from db import save_event, update_scores, get_profile, event_exists
 from typing import Optional
 from anthropic import Anthropic
 
@@ -232,6 +232,13 @@ def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
 
     print("  [2] Extracting...")
     extracted = extract(message)
+
+    # Deduplicate cross-posted events
+    title = extracted.get("title", "")
+    if event_exists(title):
+        print(f"  [2] Duplicate detected: '{title}', discarding.")
+        return None
+
     event_id = save_event(channel, message, extracted)
     extracted["_id"] = event_id
     print(f"  [2] Extracted and saved, id: {event_id}")
@@ -246,6 +253,10 @@ def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
 
     print("  [4] Adjusting...")
     adjusted = adjust(claude_score, extracted, profile)
+    min_threshold = int(profile.get("min_threshold", 1))
+    if adjusted < min_threshold:
+        print(f"  [4] adjusted_score {adjusted} below min_threshold {min_threshold}, discarding.")
+        return None
     print(f"  [4] adjusted_score: {adjusted}")
 
     update_scores(event_id, claude_score, adjusted, why_go, matched_tags)

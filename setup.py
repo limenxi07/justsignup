@@ -79,6 +79,20 @@ def prompt_text(question: str, skippable: bool = True) -> Optional[str]:
     return raw
 
 
+def prompt_int(question: str, min_val: int, max_val: int, skippable: bool = True) -> Optional[int]:
+    print(f"\n{question}")
+    if skippable:
+        print("  (or press Enter to skip)")
+    while True:
+        raw = input("Enter number: ").strip()
+        if skippable and not raw:
+            return None
+        if raw.isdigit() and min_val <= int(raw) <= max_val:
+            return int(raw)
+        print(f"  Please enter a number between {min_val} and {max_val}." +
+              (" Or press Enter to skip." if skippable else ""))
+
+
 def run_setup():
     init_db()
 
@@ -155,6 +169,14 @@ def run_setup():
     )
     if tone is not None:
         updates["tone"] = tone.lower()
+
+    min_threshold = prompt_int(
+        "Minimum relevancy score for an event to be stored at all? "
+        "Events scoring below this are discarded entirely.",
+        1, 10
+    )
+    if min_threshold is not None:
+        updates["min_threshold"] = str(min_threshold)
 
     digest_frequency = prompt_choice(
         "How often do you want to receive your digest?",

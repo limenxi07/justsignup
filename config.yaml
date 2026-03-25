@@ -8,5 +8,4 @@ score_adjustments:
   paid_event: -2          # fee > 0
   wrong_day: -2           # event day not in your preferred_days
   unknown_date: -1        # date_iso could not be parsed
-  recurring: -3           # is_recurring = true (heavy — weekly meetings spam)
   has_refreshments: +1    # refreshments != null, if boost_refreshments enabled

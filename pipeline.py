@@ -1,6 +1,6 @@
 import os
 import json
-from db import save_event
+from db import save_event, update_scores, get_profile
 from typing import Optional
 from anthropic import Anthropic
 
@@ -44,6 +44,24 @@ NUS Faculties and their departments:
 - YST: Music
 - SSH: Public Health
 """
+TONE_INSTRUCTIONS = {
+    "professional": (
+        "Concise and persuasive. No fluff. Respect the user's time. "
+        "Make the case for why this event is worth attending in direct, professional language."
+    ),
+    "casual": (
+        "Like a friend who genuinely wants them there and knows their situation. "
+        "Warm, direct, no corporate speak. Be pursuasive but friendly, like how a peer would recommend something they think is a great fit."
+    ),
+    "cheeky": (
+        "Apply light pressure. Call out excuses before they make them. "
+        "Playful but still genuinely persuasive."
+    ),
+    "brutal": (
+        "Concise, short, to the point. Colourful language is encouraged. Lay out the brutal truth of why this event is or isn't worth their time, based on their profile. If it is genuinely useful, make them feel it - encourage them strongly to go."
+        "Like how a close friend texts — no padding, no softening, just the truth."
+    ),
+}
 
 
 def get_client():
@@ -94,6 +112,117 @@ def extract(message: str) -> dict:
         return json.loads(clean)
 
 
+def score(extracted: dict, profile: dict) -> dict:
+    """
+    Step 3: Score event relevancy and generate why_go against user profile.
+    Returns dict with claude_score, why_go, matched_tags.
+    """
+    tone = profile.get("tone", "brutal").lower()
+    tone_instruction = TONE_INSTRUCTIONS.get(tone, TONE_INSTRUCTIONS["brutal"])
+
+    interest_tags = json.loads(profile.get("interest_tags", "[]"))
+    preferred_days = json.loads(profile.get("preferred_days", "[]"))
+
+    profile_block = f"""
+User profile:
+- Faculty: {profile.get('faculty', 'Unknown')}
+- Year: {profile.get('year', 'Unknown')}
+- Career clarity: {profile.get('career_clarity', 'Unknown')}
+- Time availability: {profile.get('free_time', 'Unknown')}
+- Interest tags: {', '.join(interest_tags) or 'None specified'}
+- Preferred event days: {', '.join(preferred_days) or 'Any'}
+- Bio: {profile.get('bio', 'Not provided')}
+""".strip()
+
+    event_block = f"""
+Event details:
+- Title: {extracted.get('title')}
+- Type: {extracted.get('event_type')}
+- Synopsis: {extracted.get('synopsis')}
+- Organisation: {extracted.get('organisation')}
+- Target audience: {extracted.get('target_audience')}
+- Date: {extracted.get('date')} ({extracted.get('day_of_week', 'day unknown')})
+- Location: {extracted.get('location')}
+- Fee: {extracted.get('fee')}
+- Refreshments: {extracted.get('refreshments')}
+- Key speakers: {extracted.get('key_speakers')}
+""".strip()
+
+    system_prompt = f"""
+You are an assertive personal event scout for a university student. Your job is to
+evaluate how relevant an event is to this specific user and make them feel it when
+it's worth their time. You are direct, specific to their profile, and never hedge.
+
+Tone instruction for why_go: {tone_instruction}
+
+Scoring rules:
+- Score purely on interest relevancy to the user's profile, tags, faculty, and bio.
+- Do not factor in fee, day of week, or whether it recurs — those are handled separately.
+- 1-3: Irrelevant or mismatched to their interests entirely.
+- 4-6: Tangentially related or generally useful but not a strong match.
+- 7-8: Good match to their interests or career direction.
+- 9-10: Direct hit on their stated interests, bio, or career goals.
+
+Return ONLY valid JSON in this exact format, no markdown, no explanation:
+{{
+  "claude_score": <integer 1-10>,
+  "why_go": "<2 sentences max, assertive, personalised to their profile>",
+  "matched_tags": [<list of matching interest tags from their profile, empty list if none>]
+}}
+""".strip()
+
+    response = get_client().messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        system=system_prompt,
+        messages=[{
+            "role": "user",
+            "content": f"{profile_block}\n\n{event_block}"
+        }]
+    )
+
+    raw = response.content[0].text.strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        clean = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(clean)
+
+
+def adjust(claude_score: int, extracted: dict, profile: dict) -> int:
+    """
+    Step 4: Apply score penalties and bonuses in Python. Zero API cost.
+    Returns adjusted_score clamped to 0-10.
+    """
+    with open("config.yaml") as f:
+        import yaml
+        config = yaml.safe_load(f)
+
+    adj = config.get("score_adjustments", {})
+    score = claude_score
+
+    # Paid event penalty
+    fee = extracted.get("fee")
+    if fee is not None and fee > 0:
+        score += adj.get("paid_event", -2)
+
+    # Wrong day penalty — unknown date gets its own lighter penalty
+    preferred_days = json.loads(profile.get("preferred_days", "[]"))
+    day_of_week = extracted.get("day_of_week")
+    if preferred_days:
+        if day_of_week is None:
+            score += adj.get("unknown_date", -1)
+        elif day_of_week not in preferred_days:
+            score += adj.get("wrong_day", -2)
+
+    # Refreshments bonus
+    boost = profile.get("boost_refreshments", "False") == "True"
+    if boost and extracted.get("refreshments"):
+        score += adj.get("has_refreshments", 1)
+
+    return max(0, min(10, score))
+
+
 def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
     print("  [1] Classifying...")
     if not classify(message):
@@ -102,11 +231,31 @@ def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
     print("  [1] Event detected.")
 
     print("  [2] Extracting...")
-    event = extract(message)
-    print("  [2] Extracted.")
+    extracted = extract(message)
+    event_id = save_event(channel, message, extracted)
+    extracted["_id"] = event_id
+    print(f"  [2] Extracted and saved, id: {event_id}")
 
-    event_id = save_event(channel, message, event)
-    event["_id"] = event_id  # attach id for downstream steps
-    print(f"  [2] Saved to DB, id: {event_id}")
+    print("  [3] Scoring...")
+    profile = get_profile()
+    score_result = score(extracted, profile)
+    claude_score = score_result.get("claude_score", 5)
+    why_go = score_result.get("why_go", "")
+    matched_tags = score_result.get("matched_tags", [])
+    print(f"  [3] claude_score: {claude_score}")
 
-    return event
+    print("  [4] Adjusting...")
+    adjusted = adjust(claude_score, extracted, profile)
+    print(f"  [4] adjusted_score: {adjusted}")
+
+    update_scores(event_id, claude_score, adjusted, why_go, matched_tags)
+    print(f"  [4] Scores written to DB.")
+
+    extracted.update({
+        "claude_score":   claude_score,
+        "adjusted_score": adjusted,
+        "why_go":         why_go,
+        "matched_tags":   matched_tags,
+    })
+
+    return extracted

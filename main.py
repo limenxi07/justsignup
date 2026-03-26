@@ -100,15 +100,19 @@ async def main():
 
         chat = await event.get_chat()
         channel_name = getattr(chat, "title", str(event.chat_id))
+        channel_username = getattr(chat, "username", None)  # None for private channels
+        chat_id = event.chat_id
 
         print(f"\nNew message from {channel_name}")
 
         # Run pipeline in executor so it doesn't block the event loop
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, run_pipeline, message, channel_name)
+        result = await loop.run_in_executor(
+            None, run_pipeline, message, channel_name, event.id, channel_username, chat_id
+        )
 
         if result:
-            event_id = save_event(channel_name, message, result)
+            event_id = save_event(channel_name, message, result, event.id, channel_username)
             print(f"  Saved to DB with id: {event_id}")
 
             print(f"  Event: {result.get('title')}")

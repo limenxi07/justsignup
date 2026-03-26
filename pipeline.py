@@ -223,7 +223,8 @@ def adjust(claude_score: int, extracted: dict, profile: dict) -> int:
     return max(0, min(10, score))
 
 
-def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
+def run_pipeline(message: str, channel: str = "unknown",
+                 message_id: int = None, channel_username: str = None, chat_id: int = None) -> Optional[dict]:
     print("  [1] Classifying...")
     if not classify(message):
         print("  [1] Not an event, discarding.")
@@ -239,7 +240,7 @@ def run_pipeline(message: str, channel: str = "unknown") -> Optional[dict]:
         print(f"  [2] Duplicate detected: '{title}', discarding.")
         return None
 
-    event_id = save_event(channel, message, extracted)
+    event_id = save_event(channel, message, extracted, message_id, channel_username, chat_id)
     extracted["_id"] = event_id
     print(f"  [2] Extracted and saved, id: {event_id}")
 

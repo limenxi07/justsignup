@@ -6,3 +6,4 @@
 __pycache__/
 justsignup.db
 test_*.py
+reset_db.py

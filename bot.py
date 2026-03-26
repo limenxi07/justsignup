@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -44,10 +43,8 @@ def format_event_card(event: dict) -> str:
     score_str = f"{score}/10" if score is not None else "unscored"
 
     fee = event.get("fee")
-    if fee is None:
-        fee_str = "fee unknown"
-    elif fee == 0.0:
-        fee_str = "free"
+    if fee is None or fee == 0.0:
+        fee_str = None
     else:
         fee_str = f"${fee:.2f}"
 
@@ -66,9 +63,12 @@ def format_event_card(event: dict) -> str:
     lines = [
         f"[{score_str}] {event_type} · {org}",
         f"<b>{title}</b>",
-        f"📅 {date_str}",
-        f"📍 {location}   💰 {fee_str}",
+        f"📅 {date_str}"
     ]
+    if fee_str:
+        lines.append(f"📍 {location}   💰 {fee_str}")
+    else:
+        lines.append(f"📍 {location}")
 
     if refreshments:
         lines.append(f"🍕 {refreshments}")
@@ -77,6 +77,23 @@ def format_event_card(event: dict) -> str:
 
     if why_go:
         lines.append(f"\n<i>{why_go}</i>")
+
+    # Link back to original source
+    channel_username = event.get("channel_username")
+    message_id = event.get("message_id")
+    channel = event.get("channel", "Unknown channel")
+
+    if channel_username and message_id:
+        source_str = f'<a href="https://t.me/{channel_username}/{message_id}">View original in {channel}</a>'
+    elif message_id:
+        # private channel — construct the c/ style link using numeric chat_id
+        # strip the -100 prefix Telegram adds to channel IDs
+        raw_id = str(event.get("channel", "")).lstrip("-100") if not channel_username else None
+        source_str = f"📢 {channel}"
+    else:
+        source_str = f"📢 {channel}"
+
+    lines.append(source_str)
 
     return "\n".join(lines)
 

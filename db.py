@@ -1,9 +1,10 @@
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 DB_PATH = "justsignup.db"
+SGT = timezone(timedelta(hours=8))
 
 
 def get_connection():
@@ -21,6 +22,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS events (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             channel         TEXT,
+            channel_username TEXT,  -- for link construction
+            message_id      INTEGER, -- Telegram message ID
+            chat_id         INTEGER,
             raw_text        TEXT,
             title           TEXT,
             event_type      TEXT,
@@ -65,7 +69,8 @@ def init_db():
     conn.close()
 
 
-def save_event(channel: str, raw_text: str, extracted: dict) -> int:
+def save_event(channel: str, raw_text: str, extracted: dict,
+               message_id: int = None, channel_username: str = None, chat_id: int = None) -> int:
     """
     Save an extracted event to the DB.
     claude_score, adjusted_score, why_go, matched_tags are null at this stage.
@@ -76,13 +81,17 @@ def save_event(channel: str, raw_text: str, extracted: dict) -> int:
 
     c.execute("""
         INSERT INTO events (
-            channel, raw_text, title, event_type, synopsis, organisation,
+            channel, channel_username, message_id, chat_id, raw_text,
+            title, event_type, synopsis, organisation,
             target_audience, date, date_iso, day_of_week, location, fee,
             signup_link, deadline, key_speakers, refreshments, contacts,
             claude_score, adjusted_score, why_go, matched_tags, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         channel,
+        channel_username,
+        message_id,
+        chat_id,
         raw_text,
         extracted.get("title"),
         extracted.get("event_type"),
@@ -103,7 +112,7 @@ def save_event(channel: str, raw_text: str, extracted: dict) -> int:
         None,   # adjusted_score — filled in after Step 4
         None,   # why_go — filled in after Step 3
         None,   # matched_tags — filled in after Step 3
-        datetime.utcnow().isoformat()
+        datetime.now(SGT).isoformat()
     ))
 
     event_id = c.lastrowid
@@ -142,8 +151,6 @@ def get_unsent_events(limit: int = 5) -> list[dict]:
     Return top 5 undelivered events by adjusted_score within the digest frequency window,
     sorted by adjusted_score descending. Events with null date_iso appear at the bottom.
     """
-    import json
-    from datetime import datetime, timedelta
 
     profile_conn = get_connection()
     pc = profile_conn.cursor()
@@ -160,7 +167,7 @@ def get_unsent_events(limit: int = 5) -> list[dict]:
         "Biweekly":     timedelta(days=14),
     }
     delta = cutoff_map.get(frequency, timedelta(days=1))
-    cutoff = (datetime.utcnow() - delta).isoformat()
+    cutoff = (datetime.now(SGT) - delta).isoformat()
 
     conn = get_connection()
     c = conn.cursor()
@@ -195,7 +202,7 @@ def mark_sent(event_id: int):
     c.execute("""
         INSERT OR IGNORE INTO sent_events (event_id, sent_at)
         VALUES (?, ?)
-    """, (event_id, datetime.utcnow().isoformat()))
+    """, (event_id, datetime.now(SGT).isoformat()))
 
     conn.commit()
     conn.close()
